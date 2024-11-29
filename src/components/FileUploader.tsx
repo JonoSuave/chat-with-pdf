@@ -27,30 +27,22 @@ function FileUploader() {
 
 	const onDrop = useCallback(
 		async (acceptedFiles: File[]) => {
-			// Do something with the files
+			if (acceptedFiles.length === 0) return;
 
-			console.log(acceptedFiles);
-
-			const file = acceptedFiles[0];
-
-			if (file) {
-				// await handleUpload(file)
-				if (!isOverFileLimit) {
+			if (!isOverFileLimit) {
+				for (const file of acceptedFiles) {
 					await handleUpload(file);
-				} else {
-					toast({
-						variant: "destructive",
-						title: "File Limit Reached",
-						description:
-							"You have reached the maximum number of files allowed for your account. Please upgrade to add more documents.",
-					});
 				}
 			} else {
-				// do nothing...
-				// toast
+				toast({
+					variant: "destructive",
+					title: "File Limit Reached",
+					description:
+						"You have reached the maximum number of files allowed for your account. Please upgrade to add more documents.",
+				});
 			}
 		},
-		[handleUpload, isOverFileLimit, loading, toast]
+		[handleUpload, isOverFileLimit]
 	);
 
 	const statusIcons: {
@@ -59,13 +51,15 @@ function FileUploader() {
 		[StatusText.UPLOADING]: <RocketIcon className="h-20 w-20 text-indigo-600" />,
 		[StatusText.UPLOADED]: <CheckCircleIcon className="h-20 w-20 text-indigo-600" />,
 		[StatusText.SAVING]: <SaveIcon className="h-20 w-20 text-indigo-600 animate-spin" />,
-		[StatusText.GENERATING]: <HammerIcon className="h-20 w-20 text-indigo-600 animate-bounce" />,
+		[StatusText.CLASSIFYING]: <HammerIcon className="h-20 w-20 text-indigo-600 animate-bounce" />,
+		[StatusText.CLASSIFIED]: <CheckCircleIcon className="h-20 w-20 text-green-600" />,
+		[StatusText.ERROR]: <CheckCircleIcon className="h-20 w-20 text-red-600" />,
 	};
 
 	const { getRootProps, getInputProps, isDragActive, isFocused, isDragAccept } = useDropzone({
 		onDrop,
-		maxFiles: 1,
 		accept: { "application/pdf": [".pdf"] },
+		multiple: true,
 	});
 
 	const uploadInProgress = progress !== null && progress >= 0 && progress <= 100;
