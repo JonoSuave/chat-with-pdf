@@ -1,0 +1,1 @@
+import { initializeApp, getApps } from "firebase-admin/app";

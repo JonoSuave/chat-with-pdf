@@ -1,0 +1,11 @@
+import { ChatOpenAI } from "@langchain/openai";
+import { PDFLoader } from "@langchain/community/document_loaders/fs/pdf";
+import { RecursiveCharacterTextSplitter } from "@langchain/text_splitter";
+import { OpenAIEmbeddings } from "@langchain/openai";
+import { createStuffDocumentsChain } from "langchain/c"
+
+// Initialize the OpenAI model with API key and model name
+const model = new ChatOpenAI({
+	apiKey: process.env.OPENAI_API_KEY,
+	model: "gpt-4o",
+});

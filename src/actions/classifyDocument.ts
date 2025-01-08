@@ -20,17 +20,20 @@ export async function processDocumentClassification(
         });
 
         // Analyze the document
-        await buildClassifier(documentUrl);
+        const result = await buildClassifier(documentUrl);
 
         // Update document with analysis results
         await updateDoc(docRef, {
             status: "analyzed",
+            classification: result.docType,
+            confidence: result.confidence,
             updatedAt: new Date(),
         });
 
         return {
             success: true,
-            status: "analyzed"
+            status: "analyzed",
+            classification: result.docType
         };
     } catch (error) {
         // Update document with error status

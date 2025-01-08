@@ -1,123 +1,149 @@
 "use client";
-import React, { useCallback, useEffect } from "react";
+
+import React, { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import {
-	CheckCircleIcon,
-	CircleArrowDown,
-	HammerIcon,
-	Rocket,
-	RocketIcon,
-	SaveIcon,
-} from "lucide-react";
-import useUpload, { StatusText } from "../../hooks/useUpload";
-import { useRouter } from "next/navigation";
+import { FileIcon, UploadIcon } from "lucide-react";
 import { toast } from "./ui/use-toast";
-import useSubscription from "../../hooks/useSubscription";
+import { storage, db } from "../../firebase";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { DocumentTable, Document } from "./DocumentTable";
+import { processDocumentClassification } from "@/actions/classifyDocument";
+import { useUser } from "@clerk/nextjs";
 
 function FileUploader() {
-	const { progress, status, fileId, handleUpload } = useUpload();
-	const { isOverFileLimit, loading } = useSubscription();
-	const router = useRouter();
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const { user } = useUser();
 
-	useEffect(() => {
-		if (fileId) {
-			router.push(`/dashboard/files/${fileId}`);
-		}
-	}, [fileId, router]);
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    if (acceptedFiles.length === 0 || !user) return;
+    setUploading(true);
 
-	const onDrop = useCallback(
-		async (acceptedFiles: File[]) => {
-			if (acceptedFiles.length === 0) return;
+    try {
+      for (const file of acceptedFiles) {
+        // Create storage reference
+        const storageRef = ref(storage, `users/${user.id}/documents/${file.name}`);
+        const uploadTask = uploadBytesResumable(storageRef, file);
 
-			if (!isOverFileLimit) {
-				for (const file of acceptedFiles) {
-					await handleUpload(file);
-				}
-			} else {
-				toast({
-					variant: "destructive",
-					title: "File Limit Reached",
-					description:
-						"You have reached the maximum number of files allowed for your account. Please upgrade to add more documents.",
-				});
-			}
-		},
-		[handleUpload, isOverFileLimit]
-	);
+        // Upload file
+        const url = await new Promise<string>((resolve, reject) => {
+          uploadTask.on(
+            "state_changed",
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              console.log(`Upload is ${progress}% done`);
+            },
+            (error) => {
+              reject(error);
+            },
+            async () => {
+              try {
+                const url = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(url);
+              } catch (error) {
+                reject(error);
+              }
+            }
+          );
+        });
 
-	const statusIcons: {
-		[key in StatusText]: JSX.Element;
-	} = {
-		[StatusText.UPLOADING]: <RocketIcon className="h-20 w-20 text-indigo-600" />,
-		[StatusText.UPLOADED]: <CheckCircleIcon className="h-20 w-20 text-indigo-600" />,
-		[StatusText.SAVING]: <SaveIcon className="h-20 w-20 text-indigo-600 animate-spin" />,
-		[StatusText.CLASSIFYING]: <HammerIcon className="h-20 w-20 text-indigo-600 animate-bounce" />,
-		[StatusText.CLASSIFIED]: <CheckCircleIcon className="h-20 w-20 text-green-600" />,
-		[StatusText.ERROR]: <CheckCircleIcon className="h-20 w-20 text-red-600" />,
-	};
+        // Add document to Firestore
+        const userDocumentsRef = collection(db, "users", user.id, "files");
+        const docRef = await addDoc(userDocumentsRef, {
+          name: file.name,
+          size: file.size,
+          url,
+          classification: "Processing...",
+          createdAt: serverTimestamp(),
+          status: "processing",
+        });
 
-	const { getRootProps, getInputProps, isDragActive, isFocused, isDragAccept } = useDropzone({
-		onDrop,
-		accept: { "application/pdf": [".pdf"] },
-		multiple: true,
-	});
+        // Add to local state
+        const newDoc = {
+          id: docRef.id,
+          name: file.name,
+          size: file.size,
+          url,
+          classification: "Processing...",
+          createdAt: new Date(),
+        };
+        setDocuments((prev) => [...prev, newDoc]);
 
-	const uploadInProgress = progress !== null && progress >= 0 && progress <= 100;
+        // Start document classification
+        const result = await processDocumentClassification(
+          user.id,
+          docRef.id,
+          url
+        );
 
-	return (
-		<div className="flex flex-col gap-4 items-center max-w-7xl mx-auto">
-			{/* Loading... tomorrow */}
-			{uploadInProgress && (
-				<div className="mt-32 flex flex-col justify-center items-center gap-5">
-					<div
-						className={`radial-progress bg-indigo-300 text-white border-indigo-600 border-4 ${
-							progress === 100 && "hidden"
-						}`}
-						role="progressbar"
-						title={`${progress}%`}
-						style={{
-							// @ts-ignore
-							"--value": progress,
-							"--size": "12rem",
-							"--thickness": "1.3rem",
-						}}>
-						{progress} %
-					</div>
+        if (result.success) {
+          // Update local state with classification result
+          setDocuments((prev) =>
+            prev.map((doc) =>
+              doc.id === docRef.id
+                ? { ...doc, classification: result.classification }
+                : doc
+            )
+          );
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Classification Error",
+            description: result.error,
+          });
+        }
+      }
 
-					{/* Render Status Icon */}
-					{
-						// @ts-ignore
-						statusIcons[status!]
-					}
+      toast({
+        title: "Success",
+        description: "Files uploaded successfully",
+      });
+    } catch (error) {
+      console.error("Upload error:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to upload files",
+      });
+    } finally {
+      setUploading(false);
+    }
+  }, [user]);
 
-					<p className="text-indigo-600 animate-pulse">{status}</p>
-				</div>
-			)}
-			{/* Upload Success */}
-			{!uploadInProgress && (
-				<div
-					{...getRootProps()}
-					className={`p-10 border-2 border-indigo-600 border-dashed mt-10 w-[90%] text-indigo-600 rounded-lg h-96 flex items-center justify-center ${
-						isFocused || isDragAccept ? "bg-indigo-300" : "bg-indigo-100"
-					}`}>
-					<input {...getInputProps()} />
-					<div className="flex flex-col items-center">
-						{isDragActive ? (
-							<>
-								<RocketIcon className="h-20 w-20 animate-ping" />
-								<p>Drop the files here ...</p>
-							</>
-						) : (
-							<>
-								<CircleArrowDown className="h-20 w-20 animate-bounce" />
-								<p>{`Drag 'n' drop some files here, or click to select files`}</p>
-							</>
-						)}
-					</div>
-				</div>
-			)}
-		</div>
-	);
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      'application/pdf': ['.pdf'],
+      'text/plain': ['.txt'],
+      'application/msword': ['.doc'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']
+    }
+  });
+
+  return (
+    <div className="space-y-4">
+      <div
+        {...getRootProps()}
+        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
+          ${isDragActive ? "border-blue-500 bg-blue-50" : "border-gray-300"}
+          ${uploading ? "pointer-events-none opacity-50" : ""}`}
+      >
+        <input {...getInputProps()} />
+        <div className="flex flex-col items-center justify-center gap-4">
+          <UploadIcon className="h-8 w-8 text-gray-500" />
+          <p className="text-sm text-gray-500">
+            {isDragActive
+              ? "Drop the files here..."
+              : "Drag & drop files here, or click to select files"}
+          </p>
+        </div>
+      </div>
+      <DocumentTable documents={documents} onDelete={async (id) => {
+        setDocuments((prev) => prev.filter((doc) => doc.id !== id));
+      }} />
+    </div>
+  );
 }
 
 export default FileUploader;
