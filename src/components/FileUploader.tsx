@@ -14,6 +14,7 @@ import { useUser } from "@clerk/nextjs";
 function FileUploader() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [classifying, setClassifying] = useState(false);
   const { user } = useUser();
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
@@ -54,9 +55,9 @@ function FileUploader() {
           name: file.name,
           size: file.size,
           url,
-          classification: "Processing...",
+          classification: "Pending",
           createdAt: serverTimestamp(),
-          status: "processing",
+          status: "pending",
         });
 
         // Add to local state
@@ -65,34 +66,10 @@ function FileUploader() {
           name: file.name,
           size: file.size,
           url,
-          classification: "Processing...",
+          classification: "Pending",
           createdAt: new Date(),
         };
         setDocuments((prev) => [...prev, newDoc]);
-
-        // Start document classification
-        const result = await processDocumentClassification(
-          user.id,
-          docRef.id,
-          url
-        );
-
-        if (result.success) {
-          // Update local state with classification result
-          setDocuments((prev) =>
-            prev.map((doc) =>
-              doc.id === docRef.id
-                ? { ...doc, classification: result.classification }
-                : doc
-            )
-          );
-        } else {
-          toast({
-            variant: "destructive",
-            title: "Classification Error",
-            description: result.error,
-          });
-        }
       }
 
       toast({
@@ -100,48 +77,105 @@ function FileUploader() {
         description: "Files uploaded successfully",
       });
     } catch (error) {
-      console.error("Upload error:", error);
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to upload files",
+        description: "Error uploading files",
       });
     } finally {
       setUploading(false);
     }
   }, [user]);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const classifyDocuments = async () => {
+    if (!user || classifying) return;
+    setClassifying(true);
+
+    try {
+      const pendingDocs = documents.filter(doc => doc.classification === "Pending");
+      
+      for (const doc of pendingDocs) {
+        const result = await processDocumentClassification(
+          user.id,
+          doc.id,
+          doc.url
+        );
+
+        if (result.success) {
+          setDocuments((prev) =>
+            prev.map((d) =>
+              d.id === doc.id
+                ? { ...d, classification: result.classification }
+                : d
+            )
+          );
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Classification Error",
+            description: `Error classifying ${doc.name}: ${result.error}`,
+          });
+        }
+      }
+
+      toast({
+        title: "Success",
+        description: "Documents classified successfully",
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Error classifying documents",
+      });
+    } finally {
+      setClassifying(false);
+    }
+  };
+
+  const { getRootProps, getInputProps } = useDropzone({
     onDrop,
     accept: {
-      'application/pdf': ['.pdf'],
-      'text/plain': ['.txt'],
-      'application/msword': ['.doc'],
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']
-    }
+      "application/pdf": [".pdf"],
+    },
   });
 
   return (
-    <div className="space-y-4">
+    <div className="p-2 bg-white rounded-xl">
       <div
-        {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-          ${isDragActive ? "border-blue-500 bg-blue-50" : "border-gray-300"}
-          ${uploading ? "pointer-events-none opacity-50" : ""}`}
+        {...getRootProps({
+          className:
+            "border-dashed border-2 rounded-xl cursor-pointer bg-gray-50 py-8 flex justify-center items-center flex-col",
+        })}
       >
         <input {...getInputProps()} />
-        <div className="flex flex-col items-center justify-center gap-4">
-          <UploadIcon className="h-8 w-8 text-gray-500" />
-          <p className="text-sm text-gray-500">
-            {isDragActive
-              ? "Drop the files here..."
-              : "Drag & drop files here, or click to select files"}
-          </p>
-        </div>
+        {uploading ? (
+          <>Loading...</>
+        ) : (
+          <>
+            <UploadIcon className="w-10 h-10 text-blue-500" />
+            <p className="mt-2 text-sm text-slate-400">Drop PDF files here</p>
+          </>
+        )}
       </div>
-      <DocumentTable documents={documents} onDelete={async (id) => {
+
+      <div className="mt-4">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-sm font-semibold">Your Documents</h2>
+          {documents.some(doc => doc.classification === "Pending") && (
+            <button
+              onClick={classifyDocuments}
+              disabled={classifying}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 disabled:opacity-50"
+            >
+              {classifying ? "Classifying..." : "Classify Documents"}
+            </button>
+          )}
+        </div>
+        <DocumentTable documents={documents} onDelete={async (id) => {
         setDocuments((prev) => prev.filter((doc) => doc.id !== id));
       }} />
+      </div>
     </div>
   );
 }
